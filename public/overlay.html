@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rats Overlay</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    background: transparent;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  .rat {
+    position: fixed;
+    font-size: 32px;
+    pointer-events: none;
+    z-index: 90;
+    bottom: -40px;
+    will-change: left, bottom;
+  }
+
+  .rat-label {
+    position: fixed;
+    bottom: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #fff;
+    font-size: 24px;
+    font-weight: 700;
+    text-shadow:
+      2px 2px 0 rgba(0, 0, 0, 1),
+      -1px -1px 0 rgba(0, 0, 0, 0.9),
+       1px -1px 0 rgba(0, 0, 0, 0.9),
+      -1px  1px 0 rgba(0, 0, 0, 0.9),
+       0 0 12px rgba(0, 0, 0, 0.7);
+    z-index: 91;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+
+  /* Connection indicator — only visible when disconnected from WS */
+  .ws-status {
+    position: fixed;
+    top: 8px;
+    right: 8px;
+    padding: 4px 10px;
+    background: rgba(220, 38, 38, 0.8);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 3px;
+    z-index: 200;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+  }
+  .ws-status.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<div class="ws-status" id="ws-status">Rats overlay: reconnecting…</div>
+
+<script>
+  // ─── WebSocket connection ──────────────────────────────────────────────
+  // Auto-detects the server's hostname so this overlay works locally or over LAN.
+  const WS_URL = 'ws://' + (location.hostname || 'localhost') + ':3082';
+  const wsStatusEl = document.getElementById('ws-status');
+  let ws = null;
+  let reconnectTimer = null;
+
+  function connect() {
+    try {
+      ws = new WebSocket(WS_URL);
+    } catch (e) {
+      scheduleReconnect();
+      return;
+    }
+
+    ws.onopen = () => {
+      console.log('[Rats] Connected to', WS_URL);
+      wsStatusEl.classList.remove('show');
+      clearTimeout(reconnectTimer);
+    };
+
+    ws.onmessage = (e) => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch { return; }
+      if (msg.type === 'rats') {
+        fireRats(msg.count, msg.user);
+      }
+    };
+
+    ws.onclose = () => {
+      wsStatusEl.classList.add('show');
+      scheduleReconnect();
+    };
+
+    ws.onerror = () => {};
+  }
+
+  function scheduleReconnect() {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(connect, 2000);
+  }
+
+  connect();
+
+  // ─── Audio context (lazy — must be created after first user gesture or
+  //     WebSocket message, per browser autoplay policy). OBS allows autoplay
+  //     by default so this should just work as a browser source. ──────────
+  let audioCtx = null;
+  function getAudioCtx() {
+    if (!audioCtx) {
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      } catch (e) {
+        return null;
+      }
+    }
+    return audioCtx;
+  }
+
+  // ─── RATS ──────────────────────────────────────────────────────────────
+  function fireRats(count, user) {
+    count = Math.min(parseInt(count) || 1, 100);  // cap at 100 to not murder the browser
+
+    // Squeaking sounds — more rats = more squeaks, up to 15
+    const squeakCount = Math.min(count, 15);
+    for (let i = 0; i < squeakCount; i++) {
+      setTimeout(() => playSqueak(), i * 120 + Math.random() * 80);
+    }
+
+    // Spawn the rats themselves, staggered
+    for (let i = 0; i < count; i++) {
+      setTimeout(() => spawnRat(), i * 80 + Math.random() * 40);
+    }
+
+    // Show who sent them (only if 3+ rats, keeps small fires uncluttered)
+    if (user && count >= 3) {
+      const label = document.createElement('div');
+      label.className = 'rat-label';
+      label.textContent = user + ' released ' + count + ' rat' + (count > 1 ? 's' : '');
+      document.body.appendChild(label);
+      requestAnimationFrame(() => label.style.opacity = '1');
+      setTimeout(() => {
+        label.style.opacity = '0';
+        setTimeout(() => label.remove(), 500);
+      }, 3000);
+    }
+  }
+
+  function spawnRat() {
+    const rat = document.createElement('div');
+    rat.className = 'rat';
+
+    // 1 in 1000 chance: it's a lion instead
+    const isLion = Math.random() < 0.001;
+
+    // Random direction — 🐀 emoji faces left by default, so flip for rightward travel
+    const goRight = Math.random() > 0.5;
+    rat.textContent = isLion ? '🦁' : '🐀';
+    rat.style.transform = goRight ? 'scaleX(-1)' : 'scaleX(1)';
+
+    // Random color tint via CSS filter
+    const hueShift = Math.floor(Math.random() * 360);
+    const brightness = 0.7 + Math.random() * 0.6;   // 0.7 to 1.3
+    const saturation = 0.5 + Math.random() * 1.5;   // 0.5 to 2.0
+    rat.style.filter = 'hue-rotate(' + hueShift + 'deg) brightness(' + brightness + ') saturate(' + saturation + ')';
+
+    // Start position + travel distance (based on window width so overlays at different resolutions still work)
+    const W = window.innerWidth || 1920;
+    const startX = goRight ? -40 : (W + 40);
+    const endX = goRight ? (W + 40) : -40;
+    const speed = isLion ? (3 + Math.random()) : (1.5 + Math.random() * 2);
+    const wobble = Math.random() * 8 - 4;
+
+    rat.style.left = startX + 'px';
+    rat.style.bottom = '20px';
+
+    // Random sizes — small to big, lions bigger
+    const size = isLion ? (60 + Math.random() * 30) : (18 + Math.random() * 30);
+    rat.style.fontSize = size + 'px';
+    document.body.appendChild(rat);
+
+    // Force browser to register start position before adding transition
+    rat.getBoundingClientRect();
+    rat.style.transition = 'left ' + speed + 's linear, bottom 0.3s ease-in-out';
+    rat.style.left = endX + 'px';
+
+    // Wobble while running
+    let wobbleCount = 0;
+    const wobbleInterval = setInterval(() => {
+      wobbleCount++;
+      rat.style.bottom = (20 + Math.sin(wobbleCount * 2) * wobble) + 'px';
+    }, 150);
+
+    setTimeout(() => {
+      clearInterval(wobbleInterval);
+      rat.remove();
+    }, (speed + 0.2) * 1000);
+  }
+
+  // ─── Squeak (Web Audio oscillator) ─────────────────────────────────────
+  function playSqueak() {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    // High-pitched squeak: quick frequency sweep up then down
+    const baseFreq = 1800 + Math.random() * 1200;
+    osc.frequency.setValueAtTime(baseFreq, now);
+    osc.frequency.linearRampToValueAtTime(baseFreq + 600 + Math.random() * 400, now + 0.04);
+    osc.frequency.linearRampToValueAtTime(baseFreq - 200, now + 0.1);
+    osc.type = 'sine';
+
+    gain.gain.setValueAtTime(0.12, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1 + Math.random() * 0.05);
+    osc.start(now);
+    osc.stop(now + 0.15);
+  }
+</script>
+
+</body>
+</html>
